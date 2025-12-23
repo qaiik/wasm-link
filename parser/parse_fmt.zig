@@ -26,16 +26,24 @@ pub fn ParseFnDeclarationLine(alc: *std.mem.Allocator, line: []const u8) !WatFun
     var words_list = try MustFree_Collect([]const u8, spaces_iterator);
     defer words_list.deinit();
 
-    var ptr: usize = if (std.mem.eql(u8, words_list.items[0], "export")) 2 else if (std.mem.eql(u8, words_list.items[0], "fn")) 1 else 0;
-    if (ptr == 0) return FunctionParsingErrors.UnknownFunctionSignature;
+    // Determine if exported and starting index
+    var ptr: usize = 0;
+    var field_exported: bool = false;
+    if (std.mem.eql(u8, words_list.items[0], "export")) {
+        field_exported = true;
+        ptr = 2; // skip "export fn"
+    } else if (std.mem.eql(u8, words_list.items[0], "fn")) {
+        ptr = 1; // skip "fn"
+    } else {
+        return FunctionParsingErrors.UnknownFunctionSignature;
+    }
 
-    var field_exported: bool = undefined;
-    field_exported = (ptr - 1) != 0;
-
-    var field_name: []const u8 = undefined;
+    // Function name
+    if (ptr >= words_list.items.len) return FunctionParsingErrors.UnknownFunctionSignature;
+    const field_name = words_list.items[ptr];
     ptr += 1;
-    field_name = words_list.items[ptr];
 
+    // Prepare parameter array
     var params = array(ParamStruct);
     defer params.deinit();
 
@@ -44,38 +52,66 @@ pub fn ParseFnDeclarationLine(alc: *std.mem.Allocator, line: []const u8) !WatFun
     while (ptr < words_list.items.len and !std.mem.eql(u8, words_list.items[ptr], "->")) : (ptr += 1) {
         const word = words_list.items[ptr];
 
-        var is_type = false;
+        // Check if this word is a type
+        var type_value: OperandType = .None;
         for (valid_types) |t| {
             if (std.mem.eql(u8, t, word)) {
-                is_type = true;
+                type_value = try stringToOperand(t);
                 break;
             }
         }
 
-        if (is_type) {
+        if (type_value != .None) {
+            // Param is just a type (no name)
             try params.append(ParamStruct{
-                .o_type = stringToOperand(words_list.items[ptr + 1]).?,
-                .name = word,
+                .o_type = type_value,
+                .name = "",
             });
-            ptr += 1; // skip the operand we already used
-            continue;
         } else {
-            @import("std").debug.print("{s}\n", .{word});
+            // Param has a name; next word must be type
+            ptr += 1;
+            if (ptr >= words_list.items.len) return FunctionParsingErrors.UnknownFunctionSignature;
+
+            const type_word = words_list.items[ptr];
+            type_value = .None;
+            for (valid_types) |t| {
+                if (std.mem.eql(u8, t, type_word)) {
+                    type_value = try stringToOperand(t);
+                    break;
+                }
+            }
+            if (type_value == .None) return FunctionParsingErrors.UnknownFunctionSignature;
+
             try params.append(ParamStruct{
-                .o_type = stringToOperand(word).?,
-                .name = null,
+                .o_type = type_value,
+                .name = word,
             });
         }
     }
 
-    const return_type: ?OperandType = null;
+    // Return type
+    var return_type: ?OperandType = null;
+    if (ptr + 1 < words_list.items.len) {
+        const ret_word = words_list.items[ptr + 1];
+        var type_val: OperandType = .None;
+        for (valid_types) |t| {
+            if (std.mem.eql(u8, t, ret_word)) {
+                type_val = try stringToOperand(t);
+                break;
+            }
+        }
+        if (type_val == .None) return FunctionParsingErrors.UnknownFunctionSignature;
+        return_type = type_val;
+    }
 
+    // Allocate operand types array
     var operand_types = try alc.alloc(OperandType, params.items.len);
+    defer alc.free(operand_types);
     for (params.items, 0..) |p, i| {
         operand_types[i] = p.o_type;
     }
 
-    // Pass it to WatFunction
+    // Build WatFunction
     return try WatFunction.init(
         alc,
         field_name,

@@ -1,21 +1,50 @@
 const std = @import("std");
-const print = @import("std").debug.print;
 const PFDL = @import("./parser/parse_fmt.zig").ParseFnDeclarationLine;
+const WatFunction = @import("./parser/watfunc_struct.zig").WatFunction;
+const deinitOperandMap = @import("./parser/watfunc_struct.zig").deinitOperandMap;
 
 pub fn main() !void {
-    // var allocator = std.heap.page_allocator;
-    // var ts = @import("./parser/parse_fmt.zig").ParseFnDeclarationLine(&allocator, "export fn hi i32 i32");
-    // print("{}\n", .{try ts});
-    // ts.deinit();
-    // var a = @import("./util/array.zig").array(u8);
-    // try a.append(5);
-    // print("{}\n", .{a.items[0]});
-    // defer a.deinit();
+    const N = 1_000_000;
 
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    var a = gpa.allocator();
+    // Initialize an arena allocator
+    var arena_mem = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena_mem.deinit();
+    var arena = arena_mem.allocator();
 
-    var b = try PFDL(&a, "export fn add x i32 i32 ->");
-    defer b.deinit();
-    print("{}\n", .{b});
+    // Rotating pool of 8 function pointers
+    var pool: [8]?*WatFunction = .{ null, null, null, null, null, null, null, null };
+    var pool_index: usize = 0;
+
+    const start = std.time.nanoTimestamp();
+
+    for (0..N) |_| {
+        const line = "export fn add x i32 i32 -> f32 {";
+
+        // Parse function declaration using arena allocator
+        const fn_parsed = try PFDL(&arena, line);
+
+        // Allocate a pointer for the function in the arena
+        const fn_ptr = try arena.create(WatFunction);
+        fn_ptr.* = fn_parsed;
+
+        // Drop the old function in the pool, if any
+        if (pool[pool_index] != null) {
+            pool[pool_index].?.deinit();
+        }
+
+        // Put new function into the pool
+        pool[pool_index] = fn_ptr;
+        pool_index = (pool_index + 1) % pool.len;
+    }
+
+    const end = std.time.nanoTimestamp();
+    const elapsed_ms = @as(u64, (@intCast(end - start))) / 1_000_000;
+    std.debug.print("Parsed {d} functions in {d} ms\n", .{ N, elapsed_ms });
+
+    // Clean up remaining functions in the pool
+    for (pool) |fn_opt| {
+        if (fn_opt != null) fn_opt.?.deinit();
+    }
+
+    deinitOperandMap();
 }

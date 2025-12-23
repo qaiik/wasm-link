@@ -5,26 +5,33 @@ pub const OperandType = enum {
     i64,
     f32,
     f64,
+    None,
 };
 
-pub fn stringToOperand(s: []const u8) ?OperandType {
-    const mapping = [_]struct {
-        name: []const u8,
-        ty: OperandType,
-    }{
-        .{ .name = "i32", .ty = .i32 },
-        .{ .name = "i64", .ty = .i64 },
-        .{ .name = "f32", .ty = .f32 },
-        .{ .name = "f64", .ty = .f64 },
-    };
+var _map_initialized: bool = false;
+var _operand_map: std.StringHashMap(OperandType) = undefined;
 
-    for (mapping) |entry| {
-        if (std.mem.eql(u8, s, entry.name)) {
-            return entry.ty;
-        }
+pub fn stringToOperand(s: []const u8) !OperandType {
+    if (!_map_initialized) {
+        const gpa = std.heap.page_allocator;
+        _operand_map = std.StringHashMap(OperandType).init(gpa);
+
+        try _operand_map.put("i32", .i32);
+        try _operand_map.put("i64", .i64);
+        try _operand_map.put("f32", .f32);
+        try _operand_map.put("f64", .f64);
+
+        _map_initialized = true;
     }
 
-    return null;
+    return _operand_map.get(s) orelse OperandType.None;
+}
+
+pub fn deinitOperandMap() void {
+    if (_map_initialized) {
+        _operand_map.deinit();
+        _map_initialized = false;
+    }
 }
 
 pub const WatFunction = struct {
