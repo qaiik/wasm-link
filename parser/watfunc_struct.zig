@@ -1,4 +1,5 @@
 const std = @import("std");
+const ParamStruct = @import("./parse_fmt.zig").ParamStruct;
 
 pub const OperandType = enum {
     i32,
@@ -36,27 +37,24 @@ pub fn deinitOperandMap() void {
 
 pub const WatFunction = struct {
     exported: bool,
-    internal_name: []const u8, // heap-allocated string
-    params: []OperandType, // heap-allocated array
+    internal_name: []const u8,
+    params: std.array_list.Managed(ParamStruct),
     return_type: ?OperandType,
-    body: [][]const u8, // heap-allocated array of heap-allocated slices
-    allocator: *std.mem.Allocator,
+    body: [][]const u8,
+    allocator: std.mem.Allocator,
 
-    /// Initialize a WatFunction with all heap allocations
     pub fn init(
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         name: []const u8,
-        params: []const OperandType,
+        params: std.array_list.Managed(ParamStruct), // caller gives a list
         return_type: ?OperandType,
         body: []const []const u8,
     ) !WatFunction {
+        // Copy the function name
         const name_heap = try allocator.alloc(u8, name.len);
         @memcpy(name_heap, name);
 
-        const params_heap = try allocator.alloc(OperandType, params.len);
-
-        @memcpy(params_heap, params);
-
+        // Copy body lines
         const body_heap = try allocator.alloc([]const u8, body.len);
         for (body, 0..) |line, i| {
             const line_heap = try allocator.alloc(u8, line.len);
@@ -68,21 +66,38 @@ pub const WatFunction = struct {
             .allocator = allocator,
             .exported = false,
             .internal_name = name_heap,
-            .params = params_heap,
+            .params = params, // just take ownership, no memcpy
             .return_type = return_type,
             .body = body_heap,
         };
     }
 
-    /// Free all heap allocations
-    pub fn deinit(self: *WatFunction) void {
-        // Free each line in the body
-        var allocator = self.allocator;
-        for (self.body) |line| {
-            allocator.free(line);
+    pub fn loadBody(self: *WatFunction, lines: []const []const u8) !void {
+        const allocator = self.allocator;
+        var body_heap = try allocator.alloc([]const u8, lines.len);
+
+        for (lines, 0..) |line, i| {
+            const line_copy = try allocator.alloc(u8, line.len);
+            @memcpy(line_copy, line);
+            body_heap[i] = line_copy;
         }
+
+        // Free old body if any
+        if (self.body.len != 0) {
+            for (self.body) |line| allocator.free(line);
+            allocator.free(self.body);
+        }
+
+        self.body = body_heap;
+    }
+
+    pub fn deinit(self: *WatFunction) void {
+        var allocator = self.allocator;
+
+        for (self.body) |line| allocator.free(line);
         allocator.free(self.body);
-        allocator.free(self.params);
+
+        self.params.deinit();
         allocator.free(self.internal_name);
     }
 };

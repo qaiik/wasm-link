@@ -2,13 +2,12 @@ const std = @import("std");
 const WatFunction = @import("./watfunc_struct.zig").WatFunction;
 const OperandType = @import("watfunc_struct.zig").OperandType;
 const stringToOperand = @import("watfunc_struct.zig").stringToOperand;
-const array = @import("../util/array.zig").array;
-const MustFree_Collect = @import("../util/array.zig").MustFree_Collect;
-
+const array = @import("../util/qol.zig").array;
+const MustFree_Collect = @import("../util/qol.zig").collect;
 pub const FunctionParsingErrors = error{UnknownFunctionSignature};
 
 pub const ParamStruct = struct {
-    name: ?[]const u8,
+    name: []const u8,
     o_type: OperandType,
 };
 
@@ -21,7 +20,7 @@ pub fn contains(haystack: [][]const u8, needle: []const u8) bool {
     return false;
 }
 
-pub fn ParseFnDeclarationLine(alc: *std.mem.Allocator, line: []const u8) !WatFunction {
+pub fn PFDL(alc: std.mem.Allocator, line: []const u8) !WatFunction {
     const spaces_iterator = std.mem.splitAny(u8, line, " ");
     var words_list = try MustFree_Collect([]const u8, spaces_iterator);
     defer words_list.deinit();
@@ -45,7 +44,7 @@ pub fn ParseFnDeclarationLine(alc: *std.mem.Allocator, line: []const u8) !WatFun
 
     // Prepare parameter array
     var params = array(ParamStruct);
-    defer params.deinit();
+    // defer params.deinit();
 
     const valid_types = &[_][]const u8{ "i32", "i64", "f32", "f64" };
 
@@ -105,17 +104,17 @@ pub fn ParseFnDeclarationLine(alc: *std.mem.Allocator, line: []const u8) !WatFun
     }
 
     // Allocate operand types array
-    var operand_types = try alc.alloc(OperandType, params.items.len);
-    defer alc.free(operand_types);
-    for (params.items, 0..) |p, i| {
-        operand_types[i] = p.o_type;
-    }
+    // var operand_types = try alc.alloc(OperandType, params.items.len);
+    // defer alc.free(operand_types);
+    // for (params.items, 0..) |p, i| {
+    //     operand_types[i] = p.o_type;
+    // }
 
     // Build WatFunction
     return try WatFunction.init(
         alc,
         field_name,
-        operand_types,
+        params,
         return_type,
         &.{}, // empty body
     );
