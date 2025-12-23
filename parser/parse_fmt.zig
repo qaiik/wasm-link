@@ -2,7 +2,7 @@ const std = @import("std");
 const WatFunction = @import("./watfunc_struct.zig").WatFunction;
 const OperandType = @import("watfunc_struct.zig").OperandType;
 const stringToOperand = @import("watfunc_struct.zig").stringToOperand;
-const array = @import("../util/array.zig");
+const array = @import("../util/array.zig").array;
 const MustFree_Collect = @import("../util/array.zig").MustFree_Collect;
 
 pub const FunctionParsingErrors = error{UnknownFunctionSignature};
@@ -21,12 +21,12 @@ pub fn contains(haystack: [][]const u8, needle: []const u8) bool {
     return false;
 }
 
-pub fn ParseFnDeclarationLine(allocator: *std.mem.Allocator, line: []const u8) !WatFunction {
+pub fn ParseFnDeclarationLine(alc: *std.mem.Allocator, line: []const u8) !WatFunction {
     const spaces_iterator = std.mem.splitAny(u8, line, " ");
-    var words_list = try MustFree_Collect(spaces_iterator);
+    var words_list = try MustFree_Collect([]const u8, spaces_iterator);
     defer words_list.deinit();
 
-    var ptr: usize = if (std.mem.eql(u8, words_list[0], "export")) 2 else if (std.mem.eql(u8, words_list[0], "fn")) 1 else 0;
+    var ptr: usize = if (std.mem.eql(u8, words_list.items[0], "export")) 2 else if (std.mem.eql(u8, words_list.items[0], "fn")) 1 else 0;
     if (ptr == 0) return FunctionParsingErrors.UnknownFunctionSignature;
 
     var field_exported: bool = undefined;
@@ -34,39 +34,52 @@ pub fn ParseFnDeclarationLine(allocator: *std.mem.Allocator, line: []const u8) !
 
     var field_name: []const u8 = undefined;
     ptr += 1;
-    field_name = words_list[ptr];
+    field_name = words_list.items[ptr];
 
-    const params = array(ParamStruct);
+    var params = array(ParamStruct);
     defer params.deinit();
 
-    while (ptr < words_list.len and !std.mem.eql(u8, words_list[ptr], "->")) : (ptr += 1) {
-        // try params.append(ParamStruct{
-        //     .o_type = stringToOperand(words_list[ptr]),
-        //     name:
-        // });
+    const valid_types = &[_][]const u8{ "i32", "i64", "f32", "f64" };
 
-        if (contains(.{ "i32", "i64", "f32", "f64" }, words_list[ptr])) {
+    while (ptr < words_list.items.len and !std.mem.eql(u8, words_list.items[ptr], "->")) : (ptr += 1) {
+        const word = words_list.items[ptr];
+
+        var is_type = false;
+        for (valid_types) |t| {
+            if (std.mem.eql(u8, t, word)) {
+                is_type = true;
+                break;
+            }
+        }
+
+        if (is_type) {
             try params.append(ParamStruct{
-                .o_type = stringToOperand(words_list[ptr + 1]),
-                .name = words_list[ptr],
+                .o_type = stringToOperand(words_list.items[ptr + 1]).?,
+                .name = word,
             });
-            ptr += 1;
+            ptr += 1; // skip the operand we already used
             continue;
         } else {
+            @import("std").debug.print("{s}\n", .{word});
             try params.append(ParamStruct{
-                .o_type = stringToOperand(words_list[ptr]),
-                .name = "",
+                .o_type = stringToOperand(word).?,
+                .name = null,
             });
         }
     }
 
     const return_type: ?OperandType = null;
 
-    // Build and return the WatFunction with empty body
+    var operand_types = try alc.alloc(OperandType, params.items.len);
+    for (params.items, 0..) |p, i| {
+        operand_types[i] = p.o_type;
+    }
+
+    // Pass it to WatFunction
     return try WatFunction.init(
-        allocator,
+        alc,
         field_name,
-        params.items,
+        operand_types,
         return_type,
         &.{}, // empty body
     );
